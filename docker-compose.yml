@@ -1,0 +1,15 @@
+services:
+  workbuddy-monitor:
+    build: .
+    image: workbuddy-web-monitor:latest
+    container_name: workbuddy-web-monitor
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    volumes:
+      # WorkBuddy 数据目录只读挂载（macOS Docker Desktop 直接可用）
+      - ~/.workbuddy:/data/workbuddy:ro
+    environment:
+      - PORT=3456
+      # 可选：设置后访问需带 ?token=<值> 或 Authorization: Bearer <值>
+      # - AUTH_TOKEN=change-me
