@@ -82,24 +82,44 @@ function fmtMoney(n) {
 
 /* ---------------- 费用估算 ---------------- */
 
+/** DeepSeek 高峰时段：北京时间周一至五 9-12/14-18（与 scanner 端 isPeakHour 一致） */
+function isPeakHour(ts) {
+  const d = new Date(ts + 8 * 3600 * 1000);
+  const day = d.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const h = d.getUTCHours();
+  return (h >= 9 && h < 12) || (h >= 14 && h < 18);
+}
+
 /** 模型定价查询（大小写不敏感） */
 function priceFor(model) {
   if (!model || !state.pricing || !state.pricing.prices) return null;
   return state.pricing.prices[String(model).toLowerCase()] || null;
 }
 
+/** 按（可能分高峰/空闲两档的）定价计算一组 tokens 的费用 */
+function priceTokens(p, input, cached, output, peak) {
+  if (p.offpeak) {
+    const q = peak ? p : p.offpeak;
+    const miss = Math.max(0, input - cached);
+    return miss / 1e6 * q.input + cached / 1e6 * (q.cached ?? q.input) + output / 1e6 * q.output;
+  }
+  const miss = Math.max(0, input - cached);
+  return miss / 1e6 * p.input + cached / 1e6 * (p.cached ?? p.input) + output / 1e6 * p.output;
+}
+
 /** 单条请求费用（元）；未定价模型返回 null */
 function eventCost(ev) {
   const p = priceFor(ev.model);
   if (!p) return null;
-  const missInput = Math.max(0, (ev.input || 0) - (ev.cached || 0));
-  return missInput / 1e6 * p.input + (ev.cached || 0) / 1e6 * (p.cached ?? p.input) + (ev.output || 0) / 1e6 * p.output;
+  return priceTokens(p, ev.input || 0, ev.cached || 0, ev.output || 0, isPeakHour(ev.ts));
 }
 
 /**
  * 按模型的 token 分布计算费用。
  * 返回 {total, in, cache, out, partial, models[]}；完全无定价模型时返回 null。
  * partial=true 表示还有未定价模型的用量未计入（显示时追加 "+"）。
+ * 支持高峰/空闲双档定价（scanner 端已按 peak 子对象分桶）。
  */
 function costBreakdown(modelsMap) {
   if (!modelsMap) return null;
@@ -108,16 +128,27 @@ function costBreakdown(modelsMap) {
   for (const [m, info] of Object.entries(modelsMap)) {
     const p = priceFor(m);
     if (!p) { unpricedRequests += info.requests || 0; continue; }
-    const missInput = Math.max(0, (info.input || 0) - (info.cached || 0));
-    const cIn = missInput / 1e6 * p.input;
-    const cCache = (info.cached || 0) / 1e6 * (p.cached ?? p.input);
-    const cOut = (info.output || 0) / 1e6 * p.output;
+    let cIn, cCache, cOut, priceLine;
+    if (p.offpeak) {
+      const pk = info.peak || { input: 0, cached: 0, output: 0 };
+      const op = { input: (info.input || 0) - pk.input, cached: (info.cached || 0) - pk.cached, output: (info.output || 0) - pk.output };
+      cIn = Math.max(0, pk.input - pk.cached) / 1e6 * p.input + Math.max(0, op.input - op.cached) / 1e6 * p.offpeak.input;
+      cCache = pk.cached / 1e6 * p.cached + op.cached / 1e6 * p.offpeak.cached;
+      cOut = pk.output / 1e6 * p.output + op.output / 1e6 * p.offpeak.output;
+      priceLine = `${m}：高峰 输入 ${p.input}/缓存 ${p.cached}/输出 ${p.output}，空闲 ${p.offpeak.input}/${p.offpeak.cached}/${p.offpeak.output} 元/百万tokens`;
+    } else {
+      const missInput = Math.max(0, (info.input || 0) - (info.cached || 0));
+      cIn = missInput / 1e6 * p.input;
+      cCache = (info.cached || 0) / 1e6 * (p.cached ?? p.input);
+      cOut = (info.output || 0) / 1e6 * p.output;
+      priceLine = `${m}：输入 ${p.input} · 缓存命中 ${p.cached ?? '—'} · 输出 ${p.output} 元/百万tokens`;
+    }
     acc = acc || { total: 0, in: 0, cache: 0, out: 0, partial: false, models: [] };
     acc.total += cIn + cCache + cOut;
     acc.in += cIn;
     acc.cache += cCache;
     acc.out += cOut;
-    acc.models.push(`${m}：输入 ${p.input} · 缓存命中 ${p.cached ?? '—'} · 输出 ${p.output} 元/百万tokens`);
+    acc.models.push(priceLine);
   }
   if (!acc) return null;
   if (unpricedRequests > 0) acc.partial = true;
@@ -144,6 +175,9 @@ function sumCosts(sessions, field) {
 /** 费用 tooltip 文本（显示各模型单价） */
 function costTooltip(cost) {
   const lines = ['定价（元/百万 tokens）:', ...cost.models];
+  if (cost.models.some((l) => l.includes('高峰'))) {
+    lines.push('', '时段价: 高峰 = 北京时间周一至五 9-12/14-18（法定节假日除外），其余时间为空闲半价');
+  }
   if (state.pricing && state.pricing.source) lines.push('', `来源: ${state.pricing.source}`);
   if (cost.partial) lines.push('', '注意: 还有未收录定价的模型用量未计入（标 + 号）');
   lines.push('', '费用为按 token 用量的预估值，仅供参考');

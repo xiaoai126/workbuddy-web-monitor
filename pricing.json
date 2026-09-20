@@ -1,9 +1,12 @@
 {
-  "source": "open.bigmodel.cn/pricing（2026-09-20 官方定价，GLM-5.3-Flash 为标准价，非限时五折价）",
+  "source": "GLM: open.bigmodel.cn/pricing（2026-09-20，GLM-5.3-Flash 为标准价非五折价）；DeepSeek: api-docs.deepseek.com/zh-cn/quick_start/pricing（高峰价+空闲半价，高峰=北京时间周一至周五 9-12/14-18，节假日除外）",
   "currency": "CNY",
   "prices": {
     "glm-5.3-flash": { "input": 0.8, "cached": 0.23, "output": 2.8 },
     "glm-5.3": { "input": 8, "cached": 2, "output": 28 },
-    "glm-5.2": { "input": 8, "cached": 2, "output": 28 }
+    "glm-5.2": { "input": 8, "cached": 2, "output": 28 },
+    "deepseek-v4.1-flash": { "input": 2, "cached": 0.04, "output": 8, "offpeak": { "input": 1, "cached": 0.02, "output": 4 } },
+    "deepseek-v4-flash": { "input": 2, "cached": 0.04, "output": 8, "offpeak": { "input": 1, "cached": 0.02, "output": 4 } },
+    "deepseek-v4-pro": { "input": 9, "cached": 0.3, "output": 27, "offpeak": { "input": 4.5, "cached": 0.15, "output": 13.5 } }
   }
 }
