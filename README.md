@@ -120,3 +120,16 @@ environment:
 - **增量扫描**：按文件 `mtime + size` 缓存解析结果，5 秒轮询只重扫变化的文件（首轮全量 325 个文件约 0.7s，日常增量 < 50ms）
 - **只读安全**：对 WorkBuddy 数据目录只有读权限，不影响 WorkBuddy 运行
 - **兼容多种 usage 格式**：自动归一化 camelCase（`inputTokens`）、snake_case（`input_tokens`）与 rawUsage 三种记录格式
+
+## 许可证 / License
+
+本仓库采用**按地域区分的双许可**（source-available，非 OSI 标准开源）：
+
+| 地区 | 许可证 | 说明 |
+|---|---|---|
+| 中国内地（不含香港、澳门、台湾地区） | [MIT](LICENSE.MIT) | 宽松：可闭源、可商用、可再许可 |
+| 其他地区（含港澳台及海外） | [AGPL-3.0](LICENSE.AGPL-3.0) | 强 Copyleft：分发或 SaaS 服务须开源完整源码 |
+
+- 以**使用/部署行为发生地**判定，无法明确判定时从严适用 AGPL-3.0
+- 两种许可按属地自动适用，无选择权，详见 [LICENSE](LICENSE)
+- AGPL-3.0 适用地区如需商业授权，请联系仓库所有者
