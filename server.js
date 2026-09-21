@@ -18,7 +18,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { Scanner } = require('./lib/scanner.js');
+const { Scanner, beijingMidnight } = require('./lib/scanner.js');
 
 const PORT = parseInt(process.env.PORT || '3456', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -68,9 +68,7 @@ function checkAuth(req, url) {
 
 /** 全局汇总 */
 function buildSummary(list) {
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  const todayStart = midnight.getTime();
+  const todayStart = beijingMidnight(Date.now());
   const now = Date.now();
   const ACTIVE_MS = 10 * 60 * 1000;
 
@@ -118,7 +116,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- API ----
-    if (pathname === '/api/summary' || pathname === '/api/sessions' || pathname.startsWith('/api/sessions/')) {
+    if (pathname === '/api/summary' || pathname === '/api/sessions' || pathname.startsWith('/api/sessions/') || pathname === '/api/daily') {
       const list = await scanner.scanAll({ maxAgeMs: SCAN_INTERVAL_MS });
 
       if (pathname === '/api/summary') {
@@ -131,7 +129,23 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      if (pathname === '/api/daily') {
+        const days = Math.min(120, Math.max(1, parseInt(url.searchParams.get('days') || '30', 10)));
+        return sendJson(res, 200, { ok: true, daily: scanner.dailyGlobal(days) });
+      }
+
       if (pathname === '/api/sessions') {
+        const dateKey = url.searchParams.get('date');
+        if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+          return sendJson(res, 200, {
+            ok: true,
+            scanError: scanner.lastError,
+            lastScanAt: scanner.lastScanAt,
+            wbHome: WB_HOME,
+            date: dateKey,
+            sessions: scanner.daySummaries(dateKey),
+          });
+        }
         return sendJson(res, 200, {
           ok: true,
           scanError: scanner.lastError,
@@ -143,7 +157,8 @@ const server = http.createServer(async (req, res) => {
 
       const m = pathname.match(/^\/api\/sessions\/([^/]+)\/detail$/);
       if (m) {
-        const detail = await scanner.detail(m[1]);
+        const dateKey = url.searchParams.get('date');
+        const detail = scanner.detail(m[1], /^\d{4}-\d{2}-\d{2}$/.test(dateKey || '') ? dateKey : null);
         if (!detail) return sendJson(res, 404, { ok: false, error: '会话不存在' });
         return sendJson(res, 200, { ok: true, session: detail });
       }

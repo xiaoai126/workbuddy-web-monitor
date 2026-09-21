@@ -73,6 +73,63 @@ body {
 
 /* 费用展示 */
 .stat-value .cost { color: var(--orange); }
+
+/* ---------- 每日用量面板 ---------- */
+.daily-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.daily-row:hover { background: var(--bg-hover); }
+.daily-row.active { background: rgba(88, 166, 255, 0.10); outline: 1px solid var(--accent); }
+.daily-date { width: 132px; color: var(--text); flex-shrink: 0; white-space: nowrap; }
+.daily-bar-track { flex: 1; height: 12px; background: var(--border-soft); border-radius: 6px; overflow: hidden; }
+.daily-bar { height: 100%; background: var(--cyan); border-radius: 6px; min-width: 2px; opacity: .85; }
+.daily-bar.active { background: var(--accent); opacity: 1; }
+.daily-count { width: 70px; text-align: right; color: var(--text-dim); flex-shrink: 0; }
+.daily-tokens { width: 190px; text-align: right; color: var(--text-dim); flex-shrink: 0; }
+.daily-credit { width: 90px; text-align: right; color: var(--orange); flex-shrink: 0; }
+.daily-cost { width: 80px; text-align: right; color: var(--green); flex-shrink: 0; }
+
+/* 日期筛选（顶栏右侧） */
+.date-filter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.date-filter-wrap:has(#date-filter.active) { border-color: var(--accent); }
+.date-filter-label { color: var(--text-dim); font-size: 12px; user-select: none; }
+#date-filter {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  color-scheme: dark;
+  font-family: var(--mono);
+  width: 118px;
+  padding: 2px 0;
+}
+#date-filter.active { color: var(--accent); }
+.date-clear {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.date-clear:hover { color: var(--red); }
+.filters button:disabled { opacity: .35; cursor: not-allowed; }
 .cost-tip {
   display: inline-flex;
   width: 14px;

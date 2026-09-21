@@ -15,6 +15,11 @@
     </div>
     <div class="topbar-right">
       <span id="wb-home" class="wb-home" title="WorkBuddy 数据目录"></span>
+      <div class="date-filter-wrap" title="按日期筛选：仅显示当天有活动的会话与当天用量">
+        <span class="date-filter-label">按日</span>
+        <input type="date" id="date-filter">
+        <button id="date-clear" class="date-clear hidden" title="清除按日筛选">✕</button>
+      </div>
       <button id="unit-toggle" class="unit-toggle" title="切换数字单位显示">k/M</button>
       <label class="refresh-toggle" title="自动刷新（每 5 秒）">
         <input type="checkbox" id="auto-refresh" checked>
@@ -34,6 +39,12 @@
     <section class="panel model-panel">
       <h2>模型分布（按 API 请求数）</h2>
       <div id="model-dist"></div>
+    </section>
+
+    <!-- 每日用量 -->
+    <section class="panel daily-panel">
+      <h2>每日用量（北京时间 · 点击某天查看当天明细，再点一次取消）</h2>
+      <div id="daily-list"></div>
     </section>
 
     <!-- 工具栏 -->

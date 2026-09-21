@@ -17,6 +17,8 @@ const state = {
   nextRefreshAt: 0,
   unit: localStorage.getItem('wb-unit') || 'metric', // 'metric' = k/M, 'cn' = 万/亿
   pricing: null,         // /api/pricing 返回的定价表
+  date: null,            // 按日筛选：'YYYY-MM-DD'（北京时间）或 null
+  daily: [],             // /api/daily 全局按日聚合
 };
 
 const CONTEXT_REF = 200000; // 上下文占用条参考上限
@@ -222,14 +224,17 @@ async function fetchJSON(url) {
 
 async function refresh() {
   try {
-    const [sessionsRes, summaryRes, pricingRes] = await Promise.all([
-      fetchJSON('/api/sessions'),
+    const sessionsUrl = state.date ? `/api/sessions?date=${state.date}` : '/api/sessions';
+    const [sessionsRes, summaryRes, pricingRes, dailyRes] = await Promise.all([
+      fetchJSON(sessionsUrl),
       fetchJSON('/api/summary'),
       fetchJSON('/api/pricing'),
+      fetchJSON('/api/daily?days=30'),
     ]);
     state.sessions = sessionsRes.sessions || [];
     state.summary = summaryRes.summary;
     state.pricing = pricingRes.pricing;
+    state.daily = dailyRes.daily || [];
     $('#scan-error').classList.toggle('hidden', !sessionsRes.scanError);
     if (sessionsRes.scanError) $('#scan-error').textContent = '扫描错误: ' + sessionsRes.scanError;
     $('#wb-home').textContent = sessionsRes.wbHome || '';
@@ -252,7 +257,8 @@ function setStatus(kind, msg) {
 
 async function loadDetail(sessionId) {
   try {
-    const data = await fetchJSON(`/api/sessions/${sessionId}/detail`);
+    const q = state.date ? `?date=${state.date}` : '';
+    const data = await fetchJSON(`/api/sessions/${sessionId}/detail${q}`);
     if (data.ok) {
       state.details.set(sessionId, data.session);
       render();
@@ -276,13 +282,17 @@ function visibleSessions() {
       Object.keys(s.models || {}).some((m) => m.toLowerCase().includes(q))
     );
   }
-  switch (state.filter) {
-    case 'active': list = list.filter((s) => now - s.lastTs < 10 * 60 * 1000); break;
-    case '24h': list = list.filter((s) => now - s.lastTs < 24 * 3600 * 1000); break;
-    case 'today': {
-      const d = new Date(); d.setHours(0, 0, 0, 0);
-      list = list.filter((s) => s.lastTs >= d.getTime());
-      break;
+  if (state.date) {
+    // 按日模式：服务端已过滤出当天有活动的会话，快速筛选按钮不生效
+  } else {
+    switch (state.filter) {
+      case 'active': list = list.filter((s) => now - s.lastTs < 10 * 60 * 1000); break;
+      case '24h': list = list.filter((s) => now - s.lastTs < 24 * 3600 * 1000); break;
+      case 'today': {
+        const d = new Date(); d.setHours(0, 0, 0, 0);
+        list = list.filter((s) => s.lastTs >= d.getTime());
+        break;
+      }
     }
   }
   const sorters = {
@@ -300,35 +310,98 @@ function visibleSessions() {
 
 function render() {
   renderSummary();
+  renderDaily();
   renderModelDist();
   renderSessions();
 }
 
-function renderSummary() {
-  const s = state.summary;
-  const el = $('#summary-cards');
-  if (!s) { el.innerHTML = ''; return; }
-  const todayCost = sumCosts(state.sessions, 'todayModels');
-  const totalCost = sumCosts(state.sessions, 'models');
-  const cards = [
-    { label: '今日 API 请求', value: fmtInt(s.today.requests), cls: 'accent', sub: `输出 ${fmtK(s.today.output)}` },
-    { label: '今日消耗积分', value: fmtCredit(s.today.credit), cls: 'orange', sub: `累计 ${fmtCredit(s.total.credit)}` },
-  ];
-  if (todayCost && todayCost.total > 0) {
-    cards.push({
-      label: '今日预估费用',
-      value: fmtMoney(todayCost.total) + (todayCost.partial ? '+' : ''),
-      cls: 'green',
-      sub: `累计 ${fmtMoney(totalCost ? totalCost.total : 0)}${totalCost && totalCost.partial ? '+' : ''}`,
-    });
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+function weekdayOf(dateKey) {
+  return WEEKDAYS[new Date(dateKey + 'T12:00:00+08:00').getUTCDay()];
+}
+
+function renderDaily() {
+  const el = $('#daily-list');
+  if (!state.daily.length) {
+    el.innerHTML = '<div class="empty">暂无数据</div>';
+    return;
   }
-  cards.push(
-    { label: '今日输入 tokens', value: fmtK(s.today.input), cls: 'cyan', sub: `缓存命中 ${fmtK(s.today.cached)}` },
-    { label: '今日输出 tokens', value: fmtK(s.today.output), cls: 'green', sub: `推理 ${fmtInt(s.today.reasoning)}` },
-    { label: '活跃会话 (10min)', value: String(s.activeSessions), cls: 'yellow', sub: `24h 内 ${s.sessions24h} 个` },
-    { label: '累计请求', value: fmtInt(s.total.requests), cls: 'purple', sub: `共 ${s.sessions} 个会话` },
-    { label: '累计输入 tokens', value: fmtK(s.total.input), cls: 'cyan', sub: `输出 ${fmtK(s.total.output)}` },
-  );
+  const rows = state.daily.slice(0, 14);
+  const maxInput = Math.max(...rows.map((d) => d.input), 1);
+
+  el.innerHTML = rows.map((d) => {
+    const cost = costBreakdown(d.models);
+    const pct = Math.max(1.5, (d.input / maxInput) * 100);
+    const isToday = d.date === beijingToday();
+    const active = state.date === d.date;
+    return `
+    <div class="daily-row ${active ? 'active' : ''}" data-date="${d.date}" title="点击筛选 ${d.date} 的会话明细">
+      <span class="daily-date">${d.date.slice(5)} ${weekdayOf(d.date)}${isToday ? ' · 今天' : ''}</span>
+      <div class="daily-bar-track"><div class="daily-bar ${active ? 'active' : ''}" style="width:${pct}%"></div></div>
+      <span class="daily-count">${fmtInt(d.requests)} 次</span>
+      <span class="daily-tokens">入 ${fmtK(d.input)} · 出 ${fmtK(d.output)}</span>
+      <span class="daily-credit">${fmtCredit(d.credit)} 分</span>
+      <span class="daily-cost">${cost ? fmtMoney(cost.total) + (cost.partial ? '+' : '') : '–'}</span>
+    </div>`;
+  }).join('');
+}
+
+/** 北京时间今天 YYYY-MM-DD（与后端口径一致） */
+function beijingToday() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function renderSummary() {
+  const el = $('#summary-cards');
+  let cards;
+
+  if (state.date) {
+    // 按日模式：全部卡片由当天会话汇总
+    const sum = (f) => state.sessions.reduce((acc, s) => acc + (s[f] || 0), 0);
+    const cost = sumCosts(state.sessions, 'models');
+    const dayLabel = `(${state.date})`;
+    cards = [
+      { label: `当日 API 请求 ${dayLabel}`, value: fmtInt(sum('requests')), cls: 'accent', sub: `输出 ${fmtK(sum('output'))}` },
+      { label: '当日消耗积分', value: fmtCredit(sum('credit')), cls: 'orange', sub: `会话 ${state.sessions.length} 个` },
+    ];
+    if (cost && cost.total > 0) {
+      cards.push({
+        label: '当日预估费用',
+        value: fmtMoney(cost.total) + (cost.partial ? '+' : ''),
+        cls: 'green',
+        sub: `输入 ${fmtMoney(cost.in)} / 缓存 ${fmtMoney(cost.cache)} / 输出 ${fmtMoney(cost.out)}`,
+      });
+    }
+    cards.push(
+      { label: '当日输入 tokens', value: fmtK(sum('input')), cls: 'cyan', sub: `缓存命中 ${fmtK(sum('cached'))}` },
+      { label: '当日输出 tokens', value: fmtK(sum('output')), cls: 'green', sub: `推理 ${fmtInt(sum('reasoning'))}` },
+    );
+  } else {
+    const s = state.summary;
+    if (!s) { el.innerHTML = ''; return; }
+    const todayCost = sumCosts(state.sessions, 'todayModels');
+    const totalCost = sumCosts(state.sessions, 'models');
+    cards = [
+      { label: '今日 API 请求', value: fmtInt(s.today.requests), cls: 'accent', sub: `输出 ${fmtK(s.today.output)}` },
+      { label: '今日消耗积分', value: fmtCredit(s.today.credit), cls: 'orange', sub: `累计 ${fmtCredit(s.total.credit)}` },
+    ];
+    if (todayCost && todayCost.total > 0) {
+      cards.push({
+        label: '今日预估费用',
+        value: fmtMoney(todayCost.total) + (todayCost.partial ? '+' : ''),
+        cls: 'green',
+        sub: `累计 ${fmtMoney(totalCost ? totalCost.total : 0)}${totalCost && totalCost.partial ? '+' : ''}`,
+      });
+    }
+    cards.push(
+      { label: '今日输入 tokens', value: fmtK(s.today.input), cls: 'cyan', sub: `缓存命中 ${fmtK(s.today.cached)}` },
+      { label: '今日输出 tokens', value: fmtK(s.today.output), cls: 'green', sub: `推理 ${fmtInt(s.today.reasoning)}` },
+      { label: '活跃会话 (10min)', value: String(s.activeSessions), cls: 'yellow', sub: `24h 内 ${s.sessions24h} 个` },
+      { label: '累计请求', value: fmtInt(s.total.requests), cls: 'purple', sub: `共 ${s.sessions} 个会话` },
+      { label: '累计输入 tokens', value: fmtK(s.total.input), cls: 'cyan', sub: `输出 ${fmtK(s.total.output)}` },
+    );
+  }
   el.innerHTML = cards.map((c) => `
     <div class="sum-card ${c.cls}">
       <div class="label">${c.label}</div>
@@ -339,9 +412,22 @@ function renderSummary() {
 
 function renderModelDist() {
   const el = $('#model-dist');
-  const s = state.summary;
-  if (!s || !Object.keys(s.models).length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
-  const arr = Object.entries(s.models).sort((a, b) => b[1].requests - a[1].requests);
+  let modelsData;
+  if (state.date) {
+    // 按日模式：从当日会话聚合模型分布
+    modelsData = {};
+    for (const s of state.sessions) {
+      for (const [m, info] of Object.entries(s.models || {})) {
+        const slot = (modelsData[m] = modelsData[m] || { requests: 0, sessions: 0 });
+        slot.requests += info.requests || 0;
+        slot.sessions += 1;
+      }
+    }
+  } else {
+    modelsData = state.summary && state.summary.models;
+  }
+  if (!modelsData || !Object.keys(modelsData).length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  const arr = Object.entries(modelsData).sort((a, b) => b[1].requests - a[1].requests);
   const max = arr[0][1].requests || 1;
   el.innerHTML = arr.slice(0, 8).map(([name, info]) => {
     const pct = Math.max(1.5, (info.requests / max) * 100);
@@ -380,7 +466,9 @@ function sessionCard(s) {
       </div>
       <div class="card-meta">
         <div class="last-activity ${live ? 'live' : recent ? 'recent' : ''}">
-          ${live ? '● ' : ''}最后活动 ${relTime(s.lastTs)}
+          ${state.date
+            ? `当日最后活动 ${new Date(s.lastTs).toLocaleTimeString('zh-CN', { hour12: false })}`
+            : `${live ? '● ' : ''}最后活动 ${relTime(s.lastTs)}`}
         </div>
         ${s.model ? `<span class="model-badge">${esc(s.model)}</span>` : ''}
       </div>
@@ -489,8 +577,32 @@ $('#filters').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
   state.filter = btn.dataset.filter;
+  setDate(null); // 快速筛选与按日互斥
   document.querySelectorAll('#filters button').forEach((b) => b.classList.toggle('active', b === btn));
-  renderSessions();
+});
+
+/** 设置/清除按日筛选 */
+function setDate(dateKey) {
+  state.date = dateKey || null;
+  const input = $('#date-filter');
+  const clearBtn = $('#date-clear');
+  input.value = state.date || '';
+  input.classList.toggle('active', !!state.date);
+  clearBtn.classList.toggle('hidden', !state.date);
+  document.querySelectorAll('#filters button').forEach((b) => (b.disabled = !!state.date));
+  // 清除已展开会话的旧详情缓存（避免显示非当日数据）
+  state.details.clear();
+  refresh();
+}
+
+$('#date-filter').addEventListener('change', (e) => setDate(e.target.value));
+$('#date-clear').addEventListener('click', () => { setDate(null); renderDaily(); });
+$('#daily-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.daily-row');
+  if (!row) return;
+  const d = row.dataset.date;
+  setDate(state.date === d ? null : d);
+  renderDaily();
 });
 
 $('#auto-refresh').addEventListener('change', (e) => { state.autoRefresh = e.target.checked; });
