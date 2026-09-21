@@ -9,6 +9,7 @@ COPY package.json ./
 COPY server.js ./
 COPY lib ./lib
 COPY public ./public
+COPY pricing.json ./
 
 ENV NODE_ENV=production \
     PORT=3456 \

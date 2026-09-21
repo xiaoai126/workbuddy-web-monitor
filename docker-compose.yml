@@ -5,11 +5,13 @@ services:
     container_name: workbuddy-web-monitor
     restart: unless-stopped
     ports:
-      - "3456:3456"
+      - "3081:3081"
     volumes:
       # WorkBuddy 数据目录只读挂载（macOS Docker Desktop 直接可用）
       - ~/.workbuddy:/data/workbuddy:ro
+      # 定价表挂载：改 pricing.json 保存即生效，无需重新 build
+      - ./pricing.json:/app/pricing.json:ro
     environment:
-      - PORT=3456
+      - PORT=3081
       # 可选：设置后访问需带 ?token=<值> 或 Authorization: Bearer <值>
       # - AUTH_TOKEN=change-me
