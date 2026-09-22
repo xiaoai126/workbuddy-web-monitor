@@ -37,8 +37,22 @@
 
     <!-- 模型分布 -->
     <section class="panel model-panel">
-      <h2>模型分布（按 API 请求数）</h2>
+      <h2 id="model-dist-title">模型分布（按 API 请求数）</h2>
       <div id="model-dist"></div>
+    </section>
+
+    <!-- 模型 Token 用量 -->
+    <section class="panel model-panel">
+      <h2 class="tok-header">
+        <span id="model-tokens-title">模型 Token 用量</span>
+        <span class="token-legend" title="未命中输入 = 输入 − 缓存命中；推理包含在输出内">
+          <span class="legend-item"><i class="chip" style="background:#58a6ff"></i>未命中输入</span>
+          <span class="legend-item"><i class="chip" style="background:#bc8cff"></i>缓存命中</span>
+          <span class="legend-item"><i class="chip" style="background:#3fb950"></i>输出（含推理）</span>
+          <span class="legend-item"><i class="chip" style="background:#db6d28"></i>其中推理</span>
+        </span>
+      </h2>
+      <div id="model-tokens"></div>
     </section>
 
     <!-- 每日用量 -->

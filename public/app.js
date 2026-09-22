@@ -312,8 +312,141 @@ function render() {
   renderSummary();
   renderDaily();
   renderModelDist();
+  renderModelTokens();
   renderSessions();
 }
+
+function renderModelTokens() {
+  $('#model-dist-title').textContent = `模型分布（按 API 请求数）${state.date ? ' · 当日' : ''}`;
+  $('#model-tokens-title').textContent = `模型 Token 用量${state.date ? ' · 当日' : ''}`;
+  const el = $('#model-tokens');
+
+  // 从会话级按模型桶聚合（两种模式口径一致：全部=全量累计，按日=当天）
+  const agg = {};
+  for (const s of state.sessions) {
+    for (const [m, info] of Object.entries(s.models || {})) {
+      const t = (agg[m] = agg[m] || { requests: 0, input: 0, cached: 0, output: 0, reasoning: 0 });
+      t.requests += info.requests || 0;
+      t.input += info.input || 0;
+      t.cached += info.cached || 0;
+      t.output += info.output || 0;
+      t.reasoning += info.reasoning || 0;
+    }
+  }
+  modelAgg = agg; // 供悬浮提示使用
+  const entries = Object.keys(agg).length
+    ? Object.entries(agg).map(([m, t]) => ({
+        m, ...t,
+        miss: Math.max(0, t.input - t.cached),
+        outNR: Math.max(0, t.output - t.reasoning),
+      })).sort((a, b) => (b.input + b.output) - (a.input + a.output))
+    : [];
+  if (!entries.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+
+  const max = Math.max(...entries.map((x) => x.miss + x.cached + x.output), 1);
+  el.innerHTML = entries.map((x) => {
+    const seg = (v, color, label) =>
+      v > 0 ? `<div class="tok-seg" style="width:${Math.max((v / max) * 100, 0.4)}%;background:${color}" title="${esc(label)}: ${fmtK(v)}"></div>` : '';
+    const bar =
+      seg(x.miss, '#58a6ff', '未命中输入') +
+      seg(x.cached, '#bc8cff', '缓存命中') +
+      seg(x.outNR, '#3fb950', '输出（非推理）') +
+      seg(x.reasoning, '#db6d28', '推理');
+    return `
+    <div class="token-row ${x.m === selectedTokModel ? 'selected' : ''}" data-model="${esc(x.m)}">
+      <span class="model-name" title="${esc(x.m)}">${esc(x.m)}</span>
+      <div class="tok-bar-track">${bar}</div>
+      <span class="tok-num in">${fmtK(x.miss)}</span>
+      <span class="tok-num cache">${fmtK(x.cached)}</span>
+      <span class="tok-num out">${fmtK(x.output)}</span>
+      <span class="tok-num reason">${fmtK(x.reasoning)}</span>
+    </div>`;
+  }).join('');
+  // 已打开的信息卡随刷新更新数值（位置保持不变）
+  if (selectedTokModel && !tokTip.classList.contains('hidden')) {
+    tokTip.innerHTML = buildTokTipHtml(selectedTokModel);
+    positionTokTip();
+  }
+}
+
+/* ---- Token 用量点击信息卡 ---- */
+let modelAgg = {};          // renderModelTokens 聚合结果，供信息卡查询
+let selectedTokModel = null;
+
+const tokTip = document.createElement('div');
+tokTip.id = 'tok-tooltip';
+tokTip.className = 'tok-tooltip hidden';
+document.body.appendChild(tokTip);
+
+function buildTokTipHtml(m) {
+  const t = modelAgg[m];
+  if (!t) return '';
+  const miss = Math.max(0, t.input - t.cached);
+  const outNR = Math.max(0, t.output - t.reasoning);
+  const total = miss + t.cached + t.output;
+  const row = (label, color, val, cls = '') =>
+    `<div class="tt-row ${cls}"><span class="tt-label">${color ? `<i class="chip" style="background:${color}"></i>` : ''}${label}</span><span class="tt-val">${val}</span></div>`;
+  return `
+    <div class="tt-title">${esc(m)}</div>
+    ${row('请求数', null, fmtInt(t.requests) + ' 次')}
+    ${row('未命中输入', '#58a6ff', fmtK(miss))}
+    ${row('缓存命中', '#bc8cff', fmtK(t.cached))}
+    ${row('输入合计', null, fmtK(t.input), 'tt-sub')}
+    ${row('输出（非推理）', '#3fb950', fmtK(outNR))}
+    ${row('其中推理', '#db6d28', fmtK(t.reasoning))}
+    ${row('输出合计', null, fmtK(t.output), 'tt-sub')}
+    ${row('输入 + 输出总计', null, fmtK(total), 'tt-total')}`;
+}
+
+/** 把信息卡锚定到当前选中行（滚动/缩放/刷新时跟随） */
+function positionTokTip() {
+  if (!selectedTokModel || tokTip.classList.contains('hidden')) return;
+  const row = document.querySelector('.token-row.selected');
+  if (!row) return;
+  const r = row.getBoundingClientRect();
+  // 行滚出视口时暂时隐藏，滚回来再显示
+  if (r.bottom < 0 || r.top > window.innerHeight) {
+    tokTip.style.visibility = 'hidden';
+    return;
+  }
+  tokTip.style.visibility = 'visible';
+  const t = tokTip.getBoundingClientRect();
+  let x = r.right + 12;
+  if (x + t.width > window.innerWidth - 8) x = r.left - t.width - 12;
+  let y = r.top;
+  y = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - t.height - 8));
+  tokTip.style.left = `${x}px`;
+  tokTip.style.top = `${y}px`;
+}
+
+function closeTokTip() {
+  selectedTokModel = null;
+  tokTip.classList.add('hidden');
+  document.querySelectorAll('.token-row.selected').forEach((r) => r.classList.remove('selected'));
+}
+
+$('#model-tokens').addEventListener('click', (e) => {
+  const row = e.target.closest('.token-row');
+  if (!row) return;
+  const m = row.dataset.model;
+  if (selectedTokModel === m) { closeTokTip(); return; } // 再点同一行收起
+  document.querySelectorAll('.token-row.selected').forEach((r) => r.classList.remove('selected'));
+  selectedTokModel = m;
+  row.classList.add('selected');
+  tokTip.innerHTML = buildTokTipHtml(m);
+  tokTip.classList.remove('hidden');
+  positionTokTip();
+});
+
+// 滚动/缩放时信息卡跟随选中行
+window.addEventListener('scroll', positionTokTip, { passive: true });
+window.addEventListener('resize', positionTokTip);
+
+// 点击面板与信息卡以外的区域收起
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.token-row') || e.target.closest('.tok-tooltip')) return;
+  if (selectedTokModel) closeTokTip();
+});
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
@@ -375,7 +508,7 @@ function renderSummary() {
     }
     cards.push(
       { label: '当日输入 tokens', value: fmtK(sum('input')), cls: 'cyan', sub: `缓存命中 ${fmtK(sum('cached'))}` },
-      { label: '当日输出 tokens', value: fmtK(sum('output')), cls: 'green', sub: `推理 ${fmtInt(sum('reasoning'))}` },
+      { label: '当日输出 tokens', value: fmtK(sum('output')), cls: 'green', sub: `推理 ${fmtK(sum('reasoning'))}` },
     );
   } else {
     const s = state.summary;
@@ -396,10 +529,11 @@ function renderSummary() {
     }
     cards.push(
       { label: '今日输入 tokens', value: fmtK(s.today.input), cls: 'cyan', sub: `缓存命中 ${fmtK(s.today.cached)}` },
-      { label: '今日输出 tokens', value: fmtK(s.today.output), cls: 'green', sub: `推理 ${fmtInt(s.today.reasoning)}` },
+      { label: '今日输出 tokens', value: fmtK(s.today.output), cls: 'green', sub: `推理 ${fmtK(s.today.reasoning)}` },
       { label: '活跃会话 (10min)', value: String(s.activeSessions), cls: 'yellow', sub: `24h 内 ${s.sessions24h} 个` },
       { label: '累计请求', value: fmtInt(s.total.requests), cls: 'purple', sub: `共 ${s.sessions} 个会话` },
-      { label: '累计输入 tokens', value: fmtK(s.total.input), cls: 'cyan', sub: `输出 ${fmtK(s.total.output)}` },
+      { label: '累计输入 tokens', value: fmtK(s.total.input), cls: 'cyan', sub: `缓存命中 ${fmtK(s.total.cached)}` },
+      { label: '累计输出 tokens', value: fmtK(s.total.output), cls: 'green', sub: `推理 ${fmtK(s.total.reasoning)}` },
     );
   }
   el.innerHTML = cards.map((c) => `
@@ -477,7 +611,7 @@ function sessionCard(s) {
       <div class="stat-row"><span class="stat-label">模型</span><span class="stat-value">${esc(s.model || '–')}${Object.keys(s.models).length > 1 ? ` <span class="dim">(${Object.keys(s.models).length} 个模型)</span>` : ''}</span></div>
       <div class="stat-row"><span class="stat-label">上下文占用</span><span class="stat-value ${ctxSpanCls}">${fmtK(s.context)} tokens</span></div>
       <div class="stat-row"><span class="stat-label">累计输入</span><span class="stat-value"><span class="in">${fmtK(s.input)}</span> <span class="dim">(缓存命中 ${fmtK(s.cached)})</span></span></div>
-      <div class="stat-row"><span class="stat-label">累计输出</span><span class="stat-value"><span class="out">${fmtK(s.output)}</span> <span class="dim">(推理 ${fmtInt(s.reasoning)})</span></span></div>
+      <div class="stat-row"><span class="stat-label">累计输出</span><span class="stat-value"><span class="out">${fmtK(s.output)}</span> <span class="dim">(推理 ${fmtK(s.reasoning)})</span></span></div>
       <div class="stat-row"><span class="stat-label">API 请求</span><span class="stat-value">${fmtInt(s.requests)} 次</span></div>
       <div class="stat-row"><span class="stat-label">积分消耗</span><span class="stat-value">${fmtCredit(s.credit)}${s.todayCredit ? ` <span class="dim">(今日 ${fmtCredit(s.todayCredit)})</span>` : ''}</span></div>
       ${costRow}
